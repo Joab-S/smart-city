@@ -1,0 +1,16 @@
+# Banco de dados gerado em runtime
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Arquivos temporarios / logs
+*.log
+_test_*.py

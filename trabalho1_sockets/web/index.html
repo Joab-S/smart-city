@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel da Cidade Inteligente</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#19140f; --panel:#231c16; --panel-2:#2b221b; --line:#3a2e24;
+    --ink:#efe6d8; --muted:#a6917c; --faint:#6f5d4c;
+    --active:#86b27a; --inactive:#d8a85a; --fail:#d06a4f;
+    --accent:#cf8a4e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  header{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;
+    padding:22px 28px 18px;border-bottom:1px solid var(--line);}
+  header h1{font-size:20px;font-weight:600;margin:0;letter-spacing:.2px;}
+  header .sub{color:var(--muted);font-size:13px;}
+  .grow{flex:1}
+  .pulse{display:inline-block;width:9px;height:9px;border-radius:50%;
+    background:var(--active);box-shadow:0 0 0 0 rgba(134,178,122,.7);
+    animation:pulse 2s infinite;vertical-align:middle;margin-right:7px;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(134,178,122,.5)}
+    70%{box-shadow:0 0 0 7px rgba(134,178,122,0)}100%{box-shadow:0 0 0 0 rgba(134,178,122,0)}}
+  @media (prefers-reduced-motion: reduce){.pulse{animation:none}}
+  main{padding:22px 28px;max-width:1280px;margin:0 auto;}
+  .eyebrow{color:var(--accent);font-size:11px;letter-spacing:.18em;
+    text-transform:uppercase;margin:0 0 12px;}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));
+    gap:12px;margin-bottom:30px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;}
+  .card .top{display:flex;align-items:center;justify-content:space-between;}
+  .card .sid{font-weight:600;font-size:14px;}
+  .card .type{color:var(--muted);font-size:12px;margin-top:2px;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .badge{font-size:10px;letter-spacing:.06em;padding:2px 8px;border-radius:20px;
+    border:1px solid var(--line);color:var(--muted);}
+  .b-active{color:var(--active);border-color:#3f5a39;}
+  .b-inactive{color:var(--inactive);border-color:#5a4a2c;}
+  .b-fail{color:var(--fail);border-color:#5e342a;}
+  .kv{display:flex;gap:14px;margin-top:12px;color:var(--muted);font-size:12px;}
+  .kv b{color:var(--ink);font-weight:600;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;}
+  .controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;}
+  label{color:var(--muted);font-size:12px;margin-right:6px;}
+  select{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:7px 10px;font-size:13px;}
+  select:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .chartbox{position:relative;height:420px;}
+  .empty{color:var(--faint);font-size:13px;padding:40px 0;text-align:center;}
+  footer{color:var(--faint);font-size:11px;padding:18px 28px 40px;text-align:center;}
+</style>
+</head>
+<body>
+<header>
+  <h1>Painel da Cidade Inteligente</h1>
+  <span class="sub" id="gw"><span class="pulse"></span>Gateway ao vivo</span>
+  <span class="grow"></span>
+  <span class="sub mono" id="clock"></span>
+</header>
+
+<main>
+  <p class="eyebrow">Fontes de dados</p>
+  <div class="cards" id="cards"></div>
+
+  <p class="eyebrow">Series temporais</p>
+  <div class="panel">
+    <div class="controls">
+      <div><label for="metric">Metrica</label>
+        <select id="metric"></select></div>
+      <div><label for="window">Janela</label>
+        <select id="window">
+          <option value="300">5 min</option>
+          <option value="900">15 min</option>
+          <option value="1800" selected>30 min</option>
+          <option value="3600">1 hora</option>
+          <option value="86400">24 horas</option>
+        </select></div>
+    </div>
+    <div class="chartbox"><canvas id="chart"></canvas>
+      <div class="empty" id="empty" style="display:none">Sem leituras nessa janela ainda.</div>
+    </div>
+  </div>
+</main>
+
+<footer>Trabalho 1 - Sockets | UDP multicast (descoberta) - UDP (dados) - TCP (controle) - Protocol Buffers</footer>
+
+<script>
+const PALETTE = ["#cf8a4e","#86b27a","#7aa5c0","#c98ab0","#d8a85a","#9a86c0","#cf6a4f","#6fb0a0"];
+const statusClass = s => s==="ATIVA"?"b-active":s==="FALHA"?"b-fail":"b-inactive";
+const dotColor = s => s==="ATIVA"?"var(--active)":s==="FALHA"?"var(--fail)":"var(--inactive)";
+
+async function getJSON(u){ const r = await fetch(u); return r.json(); }
+
+async function refreshCards(){
+  let data;
+  try { data = await getJSON("/api/sources"); }
+  catch(e){ document.getElementById("gw").innerHTML = "Gateway offline"; return; }
+  const box = document.getElementById("cards");
+  if(!data.length){ box.innerHTML = '<div class="empty">Nenhuma fonte descoberta ainda. Inicie as fontes.</div>'; return; }
+  box.innerHTML = data.map(s => `
+    <div class="card">
+      <div class="top">
+        <div>
+          <div class="sid"><span class="dot" style="background:${dotColor(s.status)}"></span> ${s.source_id}</div>
+          <div class="type">${s.type}${s.controllable?' &middot; controlavel':''}</div>
+        </div>
+        <span class="badge ${statusClass(s.status)}">${s.status}</span>
+      </div>
+      <div class="kv mono">
+        <span>freq <b>${(+s.frequency).toFixed(0)}s</b></span>
+        <span>limiar <b>${(+s.threshold).toFixed(0)}</b></span>
+        <span>n <b>${s.readings_count}</b></span>
+      </div>
+      <div class="kv mono"><span>visto ha <b>${s.age}s</b></span><span>${s.ip}:${s.control_port}</span></div>
+    </div>`).join("");
+}
+
+async function refreshMetrics(){
+  const metrics = await getJSON("/api/metrics");
+  const sel = document.getElementById("metric");
+  const cur = sel.value;
+  sel.innerHTML = metrics.map(m=>`<option value="${m}">${m}</option>`).join("");
+  if(metrics.includes(cur)) sel.value = cur;
+}
+
+let chart;
+async function refreshChart(){
+  const metric = document.getElementById("metric").value;
+  const window = document.getElementById("window").value;
+  const empty = document.getElementById("empty");
+  if(!metric){ empty.style.display="block"; if(chart){chart.destroy();chart=null;} return; }
+  const series = await getJSON(`/api/timeseries?metric=${encodeURIComponent(metric)}&window=${window}`);
+  const sids = Object.keys(series);
+  if(!sids.length){ empty.style.display="block"; if(chart){chart.destroy();chart=null;} return; }
+  empty.style.display="none";
+  const datasets = sids.map((sid,i)=>({
+    label: sid,
+    data: series[sid].map(p=>({x:p.ts*1000, y:p.value})),
+    borderColor: PALETTE[i%PALETTE.length],
+    backgroundColor: PALETTE[i%PALETTE.length]+"22",
+    borderWidth:2, pointRadius:2, tension:.25, fill:false,
+  }));
+  const cfg = {
+    type:"line",
+    data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{mode:"nearest",intersect:false},
+      scales:{
+        x:{type:"linear",
+           ticks:{color:"#a6917c",callback:v=>new Date(v).toLocaleTimeString("pt-BR",{hour12:false})},
+           grid:{color:"#33281f"}},
+        y:{ticks:{color:"#a6917c"},grid:{color:"#33281f"}},
+      },
+      plugins:{legend:{labels:{color:"#efe6d8",usePointStyle:true,boxWidth:8}}},
+    }
+  };
+  if(chart){ chart.data.datasets = datasets; chart.update("none"); }
+  else { chart = new Chart(document.getElementById("chart"), cfg); }
+}
+
+document.getElementById("metric").addEventListener("change", refreshChart);
+document.getElementById("window").addEventListener("change", refreshChart);
+function clock(){ document.getElementById("clock").textContent = new Date().toLocaleTimeString("pt-BR",{hour12:false}); }
+
+async function tick(){ await refreshCards(); await refreshMetrics(); await refreshChart(); }
+clock(); setInterval(clock,1000);
+tick(); setInterval(tick, 3000);
+</script>
+</body>
+</html>

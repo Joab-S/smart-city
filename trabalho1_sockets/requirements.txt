@@ -1,0 +1,10 @@
+# Dependencias Python do Trabalho 1 - Sockets (cidade inteligente)
+# Instale com:  pip install -r requirements.txt
+
+# Runtime do Protocol Buffers (mensagens .proto)
+protobuf>=5.0
+
+# Compilador protoc + plugin Python (fornece "python -m grpc_tools.protoc").
+# Necessario apenas para REGERAR smartcity_pb2.py a partir do .proto.
+# O arquivo smartcity_pb2.py ja vem gerado no pacote.
+grpcio-tools>=1.60

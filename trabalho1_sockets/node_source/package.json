@@ -1,0 +1,13 @@
+{
+  "name": "smartcity-energy-meter",
+  "version": "1.0.0",
+  "description": "Fonte de dados em Node.js (medidor de energia) - interoperabilidade via Protocol Buffers",
+  "main": "energy_meter.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node energy_meter.js"
+  },
+  "dependencies": {
+    "protobufjs": "^7.2.6"
+  }
+}

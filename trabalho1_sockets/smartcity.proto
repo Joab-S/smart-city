@@ -1,0 +1,177 @@
+// =============================================================================
+// smartcity.proto
+// Definicao de TODAS as mensagens trocadas no sistema distribuido (Trabalho 1).
+//
+//   - Descoberta (Multicast UDP) : DiscoveryRequest / SourceAnnounce
+//   - Fluxo de dados (UDP)        : UdpEnvelope -> SensorData
+//   - Controle Gateway<->Fonte    : Command / CommandResult   (TCP)
+//   - Controle Cliente<->Gateway  : ClientRequest / ClientResponse (TCP)
+//
+// Compilar (Python):
+//   python -m grpc_tools.protoc -I. --python_out=. smartcity.proto
+// =============================================================================
+syntax = "proto3";
+package smartcity;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------------------
+// Enums basicos
+// ---------------------------------------------------------------------------
+enum SourceType {
+  SOURCE_UNKNOWN  = 0;
+  WEATHER_STATION = 1;   // estacao meteorologica: temperatura + umidade
+  AIR_QUALITY     = 2;   // qualidade do ar: CO2 + material particulado
+  TRAFFIC_COUNTER = 3;   // contador de trafego: veiculos/min
+  NOISE_SENSOR    = 4;   // sensor de ruido: dB
+  ENERGY_METER    = 5;   // medidor de consumo energetico: kW (fonte em Node.js)
+}
+
+enum SourceStatus {
+  STATUS_UNKNOWN = 0;
+  ACTIVE         = 1;   // operando e enviando dados
+  INACTIVE       = 2;   // desativada pelo cliente (nao envia dados)
+  FAILED         = 3;   // falha simulada / sem contato (timeout)
+}
+
+// ---------------------------------------------------------------------------
+// 1) DESCOBERTA  (Multicast UDP)
+// ---------------------------------------------------------------------------
+
+// Gateway -> grupo multicast: "quem esta ai? se identifiquem"
+message DiscoveryRequest {
+  string gateway_ip            = 1;  // IP do gateway
+  int32  gateway_tcp_port      = 2;  // porta TCP do gateway (atende o cliente)
+  int32  gateway_udp_data_port = 3;  // porta UDP onde recebe anuncios e dados
+}
+
+// Fonte -> Gateway (resposta unicast UDP): "sou eu, aqui estao meus dados"
+message SourceAnnounce {
+  string       source_id    = 1;
+  SourceType   type         = 2;
+  string       ip           = 3;  // IP da fonte
+  int32        control_port = 4;  // porta TCP onde a fonte escuta comandos
+  SourceStatus status       = 5;  // estado inicial
+  bool         controllable = 6;  // recebe comandos de configuracao?
+  string       description  = 7;
+  double       frequency    = 8;  // frequencia de envio inicial (s)
+  double       threshold    = 9;  // limiar de alerta inicial
+}
+
+// ---------------------------------------------------------------------------
+// 2) FLUXO DE DADOS  (UDP)
+// ---------------------------------------------------------------------------
+
+message Reading {
+  string name  = 1;  // ex: "temperatura", "umidade", "co2"
+  double value = 2;
+  string unit  = 3;  // ex: "C", "%", "ppm"
+}
+
+message SensorData {
+  string                     source_id = 1;
+  SourceType                 type      = 2;
+  google.protobuf.Timestamp  timestamp = 3;
+  repeated Reading           readings  = 4;
+  bool                       alert     = 5;  // disparo por evento (limiar)?
+  string                     alert_msg = 6;
+}
+
+// Envelope UDP: o gateway recebe anuncios e dados na MESMA porta UDP.
+message UdpEnvelope {
+  oneof payload {
+    SourceAnnounce announce = 1;
+    SensorData     data     = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3) CONTROLE  Gateway <-> Fonte  (TCP)
+// ---------------------------------------------------------------------------
+enum CommandType {
+  CMD_UNKNOWN      = 0;
+  SET_FREQUENCY    = 1;  // altera frequencia de envio (segundos) -> value
+  SET_THRESHOLD    = 2;  // altera limiar de alerta             -> value
+  ACTIVATE         = 3;  // ativa a fonte
+  DEACTIVATE       = 4;  // desativa a fonte
+  SIMULATE_FAILURE = 5;  // simula falha (para de enviar dados)
+  GET_STATUS       = 6;  // consulta estado atual
+}
+
+message Command {
+  CommandType type  = 1;
+  double      value = 2;  // usado em SET_FREQUENCY / SET_THRESHOLD
+}
+
+message CommandResult {
+  bool         success   = 1;
+  string       message   = 2;
+  SourceStatus status    = 3;
+  double       frequency = 4;
+  double       threshold = 5;
+}
+
+// ---------------------------------------------------------------------------
+// 4) CONTROLE  Cliente <-> Gateway  (TCP)
+// ---------------------------------------------------------------------------
+enum ClientRequestType {
+  REQ_UNKNOWN  = 0;
+  LIST_SOURCES = 1;  // lista fontes conectadas e seus estados
+  SEND_COMMAND = 2;  // encaminha comando para uma fonte especifica
+  QUERY        = 3;  // consulta analitica agregada
+}
+
+enum QueryType {
+  QUERY_UNKNOWN = 0;
+  AVG           = 1;  // media de uma metrica na janela
+  STDDEV        = 2;  // desvio padrao
+  MIN           = 3;
+  MAX           = 4;
+  COUNT         = 5;  // numero de leituras
+  MAX_VARIATION = 6;  // fonte com maior variacao (desvio padrao) da metrica
+  HISTORY       = 7;  // historico de leituras (persistencia)
+  LATEST        = 8;  // ultima leitura de cada fonte
+}
+
+message AnalyticQuery {
+  QueryType type           = 1;
+  string    source_id      = 2;  // opcional: filtra por fonte
+  string    metric         = 3;  // ex: "temperatura", "co2"
+  int32     window_seconds = 4;  // janela temporal (ex: 3600 = ultima hora)
+}
+
+message ClientRequest {
+  ClientRequestType type      = 1;
+  string            source_id = 2;  // alvo (SEND_COMMAND)
+  Command           command   = 3;  // SEND_COMMAND
+  AnalyticQuery     query     = 4;  // QUERY
+}
+
+// Visao que o gateway tem de cada fonte
+message SourceInfo {
+  string                    source_id    = 1;
+  SourceType                type         = 2;
+  string                    ip           = 3;
+  int32                     control_port = 4;
+  SourceStatus              status       = 5;
+  bool                      controllable = 6;
+  string                    description  = 7;
+  google.protobuf.Timestamp last_seen    = 8;
+  double                    frequency    = 9;
+  double                    threshold    = 10;
+  int64                     readings_count = 11;
+}
+
+message QueryResultRow {
+  string label = 1;
+  double value = 2;
+  string extra = 3;  // texto auxiliar (unidade, timestamp, etc.)
+}
+
+message ClientResponse {
+  bool                    success        = 1;
+  string                  message        = 2;
+  repeated SourceInfo     sources        = 3;  // LIST_SOURCES
+  CommandResult           command_result = 4;  // SEND_COMMAND
+  repeated QueryResultRow rows           = 5;  // QUERY
+}
